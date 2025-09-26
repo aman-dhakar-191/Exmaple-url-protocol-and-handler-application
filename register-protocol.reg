@@ -5,15 +5,11 @@ Windows Registry Editor Version 5.00
 "URL Protocol"=""
 
 [HKEY_CLASSES_ROOT\myapp\DefaultIcon]
-@="\"C:\\path\\to\\your\\app\\myapp.exe\",1"
+@="\"E:\\Exmaple-url-protocol-and-handler-application\\dist\\win-unpacked\\URL Protocol Handler Demo.exe\",1"
 
 [HKEY_CLASSES_ROOT\myapp\shell]
 
 [HKEY_CLASSES_ROOT\myapp\shell\open]
 
 [HKEY_CLASSES_ROOT\myapp\shell\open\command]
-@="\"C:\\path\\to\\your\\app\\myapp.exe\" \"%1\""
-
-; Note: Replace C:\\path\\to\\your\\app\\myapp.exe with the actual path to your built Electron app
-; This file is for manual registration during development
-; The electron-builder will handle this automatically during installation
+@="\"E:\\Exmaple-url-protocol-and-handler-application\\dist\\win-unpacked\\URL Protocol Handler Demo.exe\" \"%1\""

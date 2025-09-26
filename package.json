@@ -21,8 +21,7 @@
       "schemes": ["myapp"]
     },
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.ico"
+      "target": "nsis"
     },
     "nsis": {
       "oneClick": false,
@@ -44,6 +43,7 @@
     "concurrently": "^7.6.0",
     "electron": "^22.0.0",
     "electron-builder": "^23.6.0",
+    "electron-reload":"2.0.0-alpha.1",
     "wait-on": "^7.0.1"
   },
   "dependencies": {

@@ -14,10 +14,14 @@ let serverProcess;
 
 // Enable live reload for development
 if (process.env.NODE_ENV === 'development') {
-  require('electron-reload')(__dirname, {
-    electron: path.join(__dirname, '..', 'node_modules', '.bin', 'electron'),
-    hardResetMethod: 'exit'
-  });
+  try {
+    require('electron-reload')(__dirname, {
+      electron: path.join(__dirname, '..', '..', 'node_modules', '.bin', 'electron'),
+      hardResetMethod: 'exit'
+    });
+  } catch (error) {
+    console.log('electron-reload not available in production build');
+  }
 }
 
 function createWindow() {
@@ -35,9 +39,12 @@ function createWindow() {
   });
 
   // Start the Express server first
-  startServer().then(() => {
-    // Load the web app from the server
-    const serverUrl = 'http://localhost:3000';
+  startServer().then((result) => {
+    // Use the actual port from the server startup
+    const actualPort = result?.port || global.serverPort || 3000;
+    const serverUrl = `http://localhost:${actualPort}`;
+    
+    console.log(`Loading web app from: ${serverUrl}`);
     
     // Wait a bit for server to fully start
     setTimeout(() => {
@@ -48,7 +55,7 @@ function createWindow() {
       mainWindow.once('ready-to-show', () => {
         mainWindow.show();
       });
-    }, 3000); // Increased timeout to ensure server starts
+    }, 2000); // Reduced timeout since we now have proper server startup confirmation
   }).catch((error) => {
     console.error('Failed to start server:', error);
     // Fallback: load HTML file directly
@@ -152,62 +159,22 @@ let embeddedServer;
 const activeSessions = new Map();
 
 function startEmbeddedServer() {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     try {
-      // Start the standalone server instead of duplicating code
-      // This ensures we use the same GitHub OAuth implementation
-      const serverPath = path.join(__dirname, '../server/server.js');
-      const serverProcess = spawn('node', [serverPath], {
-        cwd: path.join(__dirname, '../..'),
-        env: { 
-          ...process.env, 
-          NODE_ENV: 'development',
-          // Ensure we have the env variables
-          GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID || 'demo_client_id',
-          GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET || 'demo_client_secret',
-          SESSION_SECRET: process.env.SESSION_SECRET || 'demo_session_secret'
-        }
-      });
-
-      let serverReady = false;
-
-      serverProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log('Server:', output.trim());
-        
-        if (output.includes('Server running at') && !serverReady) {
-          serverReady = true;
-          setTimeout(() => resolve(), 1000); // Give it a moment to fully initialize
-        }
-      });
-
-      serverProcess.stderr.on('data', (data) => {
-        console.error('Server error:', data.toString());
-      });
-
-      serverProcess.on('error', (error) => {
-        console.error('Failed to start server process:', error);
-        if (!serverReady) {
-          reject(error);
-        }
-      });
-
-      serverProcess.on('close', (code) => {
-        console.log(`Server process exited with code ${code}`);
-      });
-
-      // Store reference for cleanup
-      global.serverProcess = serverProcess;
-
-      // Timeout fallback
-      setTimeout(() => {
-        if (!serverReady) {
-          console.log('Server start timeout - assuming it started');
-          resolve();
-        }
-      }, 8000);
-
+      // Import the server module with the new startup method
+      const { startServerWithPortFallback } = require('../server/server.js');
+      
+      // Start server with automatic port fallback
+      const result = await startServerWithPortFallback(3000, 5);
+      
+      // Store the server reference and actual port for cleanup
+      global.embeddedServerInstance = result.server;
+      global.serverPort = result.port;
+      
+      console.log(`Server started successfully on port ${result.port}`);
+      resolve(result);
     } catch (error) {
+      console.error('Failed to start embedded server:', error);
       reject(error);
     }
   });
@@ -275,12 +242,12 @@ function processProtocolUrl(url) {
         timestamp: new Date().toISOString()
       };
 
-      // Show success dialog
+      // Show success dialog with more details
       dialog.showMessageBox(mainWindow, {
         type: 'info',
         title: 'Authentication Successful',
         message: 'Welcome back!',
-        detail: `User: ${user ? user.username || user.name || 'Unknown' : 'N/A'}\nToken: ${token}`
+        detail: `User: ${user ? user.username || user.name || 'Unknown' : 'N/A'}\nToken: ${token ? token.substring(0, 20) + '...' : 'N/A'}\nSession: ${sessionId}`
       });
 
       // Send result to renderer process
@@ -361,14 +328,23 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    // Close embedded server
-    if (embeddedServer) {
-      embeddedServer.close();
+    // Close embedded server properly
+    if (global.embeddedServerInstance) {
+      console.log('Closing embedded server...');
+      global.embeddedServerInstance.close((err) => {
+        if (err) {
+          console.error('Error closing server:', err);
+        } else {
+          console.log('Server closed successfully');
+        }
+      });
     }
-    // Kill server process if it exists
+    
+    // Legacy cleanup for old server processes
     if (global.serverProcess) {
       global.serverProcess.kill();
     }
+    
     app.quit();
   }
 });

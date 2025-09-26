@@ -148,8 +148,27 @@ app.get('/auth/github/callback',
                                })) + 
                                '&session_id=${sessionId}';
             
-            alert('Redirecting back to desktop app...');
+            // Try to redirect to the desktop app
             window.location.href = callbackUrl;
+            
+            // Show success message and try to close the window after a short delay
+            setTimeout(() => {
+              document.body.innerHTML = \`
+                <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+                  <h2 style="color: #28a745;">✅ Authentication Complete!</h2>
+                  <p>You have been successfully redirected to the desktop app.</p>
+                  <p>You can safely close this browser window.</p>
+                  <button onclick="window.close()" style="background: #007cba; color: white; border: none; padding: 10px 20px; cursor: pointer; margin-top: 20px;">Close Window</button>
+                </div>
+              \`;
+              
+              // Try to close the window (might not work due to browser security)
+              try {
+                window.close();
+              } catch (e) {
+                console.log('Cannot auto-close window due to browser security policy');
+              }
+            }, 1000);
           }
           
           async function testGitHubAPI() {
@@ -167,8 +186,8 @@ app.get('/auth/github/callback',
             }
           }
           
-          // Auto-redirect after 5 seconds
-          setTimeout(redirectToApp, 5000);
+          // Auto-redirect immediately after page loads
+          setTimeout(redirectToApp, 2000);
         </script>
       </body>
       </html>
@@ -281,9 +300,52 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000);
 
-app.listen(port, () => {
-  console.log(`🚀 Server running at http://localhost:${port}`);
-  console.log(`🔗 Authentication flow available at http://localhost:${port}/auth/start`);
-});
+// Function to find an available port
+function startServerWithPortFallback(startPort = port, maxAttempts = 5) {
+  return new Promise((resolve, reject) => {
+    let currentPort = startPort;
+    let attempts = 0;
 
-module.exports = app;
+    function tryPort() {
+      const server = app.listen(currentPort, (err) => {
+        if (err) {
+          console.error(`Port ${currentPort} failed:`, err.message);
+          return reject(err);
+        }
+        
+        console.log(`🚀 Server running at http://localhost:${currentPort}`);
+        console.log(`🔗 Authentication flow available at http://localhost:${currentPort}/auth/start`);
+        resolve({ server, port: currentPort });
+      });
+
+      server.on('error', (err) => {
+        if (err.code === 'EADDRINUSE' && attempts < maxAttempts) {
+          attempts++;
+          currentPort++;
+          console.log(`Port ${currentPort - 1} in use, trying port ${currentPort}...`);
+          setTimeout(tryPort, 100);
+        } else {
+          reject(err);
+        }
+      });
+    }
+
+    tryPort();
+  });
+}
+
+// Start server with port fallback
+if (require.main === module) {
+  startServerWithPortFallback()
+    .then(({ server, port: actualPort }) => {
+      // Update the global port variable
+      port = actualPort;
+      console.log(`✅ Server successfully started on port ${actualPort}`);
+    })
+    .catch(err => {
+      console.error('❌ Failed to start server:', err.message);
+      process.exit(1);
+    });
+}
+
+module.exports = { app, startServerWithPortFallback };
