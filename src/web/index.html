@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Protocol Handler Demo</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4a5568;
+            margin-bottom: 30px;
+        }
+        
+        .demo-section {
+            margin: 30px 0;
+            padding: 20px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f7fafc;
+        }
+        
+        .demo-section h3 {
+            margin-top: 0;
+            color: #2d3748;
+        }
+        
+        button {
+            background: #4299e1;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #3182ce;
+        }
+        
+        button:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+        }
+        
+        .protocol-button {
+            background: #48bb78;
+        }
+        
+        .protocol-button:hover {
+            background: #38a169;
+        }
+        
+        .status {
+            margin: 15px 0;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .status.success {
+            background: #c6f6d5;
+            color: #22543d;
+            border: 1px solid #9ae6b4;
+        }
+        
+        .status.error {
+            background: #fed7d7;
+            color: #742a2a;
+            border: 1px solid #fc8181;
+        }
+        
+        .status.info {
+            background: #bee3f8;
+            color: #2a4365;
+            border: 1px solid #90cdf4;
+        }
+        
+        .info-box {
+            background: #edf2f7;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .info-box h4 {
+            margin-top: 0;
+            color: #4a5568;
+        }
+        
+        .code {
+            font-family: 'Courier New', monospace;
+            background: #1a202c;
+            color: #e2e8f0;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔗 URL Protocol Handler Demo</h1>
+        
+        <div class="info-box">
+            <h4>About This Demo</h4>
+            <p>This application demonstrates how to implement URL protocol handling with Node.js and Electron. The flow includes:</p>
+            <ul>
+                <li>Opening a web page from the desktop app</li>
+                <li>Completing authentication in the browser</li>
+                <li>Redirecting back to the desktop app with parameters</li>
+                <li>Handling the custom URL protocol (<code>myapp://</code>)</li>
+            </ul>
+        </div>
+        
+        <div class="demo-section">
+            <h3>🌐 Web-based Authentication Flow</h3>
+            <p>Start the authentication process. This will open your browser and redirect back to the app:</p>
+            <button id="startAuth">Start Authentication Flow</button>
+            <button id="checkStatus" class="hidden">Check Status</button>
+            <div id="authStatus"></div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>🔗 Direct Protocol Test</h3>
+            <p>Test the custom URL protocol handler directly:</p>
+            <button class="protocol-button" onclick="testProtocol('myapp://test/basic')">Basic Protocol Test</button>
+            <button class="protocol-button" onclick="testProtocol('myapp://auth/callback?token=test123&user={\"name\":\"Test User\"}')">Auth Callback Test</button>
+            <div class="code">
+                Custom Protocol: <strong>myapp://</strong><br>
+                Example URLs:<br>
+                • myapp://test/basic<br>
+                • myapp://auth/callback?token=abc123&user={"name":"John"}
+            </div>
+        </div>
+        
+        <div class="demo-section">
+            <h3>📊 Server Status</h3>
+            <button id="checkHealth">Check Server Health</button>
+            <div id="healthStatus"></div>
+        </div>
+        
+        <div class="info-box">
+            <h4>🛠️ Development Info</h4>
+            <p><strong>Server:</strong> http://localhost:3000</p>
+            <p><strong>Protocol:</strong> myapp://</p>
+            <p><strong>Registry:</strong> Protocol will be registered when app is installed</p>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        let statusCheckInterval = null;
+
+        // Start authentication flow
+        document.getElementById('startAuth').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/auth/start');
+                const data = await response.json();
+                
+                currentSessionId = data.sessionId;
+                
+                showStatus('info', `Authentication session started. Opening browser...`);
+                
+                // Open the auth URL in the default browser
+                window.open(data.authUrl, '_blank');
+                
+                // Show check status button and hide start button
+                document.getElementById('startAuth').style.display = 'none';
+                document.getElementById('checkStatus').classList.remove('hidden');
+                
+                // Start polling for status
+                startStatusPolling();
+                
+            } catch (error) {
+                showStatus('error', `Error starting authentication: ${error.message}`);
+            }
+        });
+
+        // Check authentication status
+        document.getElementById('checkStatus').addEventListener('click', checkAuthStatus);
+
+        // Check server health
+        document.getElementById('checkHealth').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/health');
+                const data = await response.json();
+                
+                document.getElementById('healthStatus').innerHTML = `
+                    <div class="status success">
+                        ✅ Server is healthy<br>
+                        Timestamp: ${data.timestamp}
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('healthStatus').innerHTML = `
+                    <div class="status error">
+                        ❌ Server is not responding<br>
+                        Error: ${error.message}
+                    </div>
+                `;
+            }
+        });
+
+        async function checkAuthStatus() {
+            if (!currentSessionId) {
+                showStatus('error', 'No active session');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/auth/status/${currentSessionId}`);
+                const data = await response.json();
+                
+                if (data.status === 'completed') {
+                    showStatus('success', `
+                        ✅ Authentication completed!<br>
+                        Token: ${data.token}<br>
+                        User: ${JSON.stringify(data.user)}
+                    `);
+                    stopStatusPolling();
+                    resetAuthButtons();
+                } else {
+                    showStatus('info', `Status: ${data.status} (waiting for completion...)`);
+                }
+            } catch (error) {
+                showStatus('error', `Error checking status: ${error.message}`);
+            }
+        }
+
+        function startStatusPolling() {
+            statusCheckInterval = setInterval(checkAuthStatus, 2000);
+        }
+
+        function stopStatusPolling() {
+            if (statusCheckInterval) {
+                clearInterval(statusCheckInterval);
+                statusCheckInterval = null;
+            }
+        }
+
+        function resetAuthButtons() {
+            document.getElementById('startAuth').style.display = 'inline-block';
+            document.getElementById('checkStatus').classList.add('hidden');
+            currentSessionId = null;
+        }
+
+        function showStatus(type, message) {
+            const statusDiv = document.getElementById('authStatus');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function testProtocol(url) {
+            try {
+                window.location.href = url;
+            } catch (error) {
+                alert(`Protocol test failed: ${error.message}\n\nMake sure the desktop app is installed and running.`);
+            }
+        }
+
+        // Check server health on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('checkHealth').click();
+        });
+    </script>
+</body>
+</html>
