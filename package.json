@@ -8,7 +8,11 @@
     "dev": "concurrently \"npm run server\" \"wait-on http://localhost:3000 && electron . --no-sandbox\"",
     "server": "node src/server/server.js",
     "build": "electron-builder",
-    "dist": "electron-builder --publish=never"
+    "dist": "electron-builder --publish=never",
+    "framework:test": "node tests/framework-tests.js",
+    "framework:basic": "node examples/basic-app/main.js",
+    "framework:app": "node src/framework-app.js",
+    "test": "npm run framework:test"
   },
   "build": {
     "appId": "com.example.urlprotocolhandler",
