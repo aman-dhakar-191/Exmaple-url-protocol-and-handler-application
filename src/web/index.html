@@ -120,6 +120,29 @@
         .hidden {
             display: none;
         }
+        
+        .user-details {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        
+        .avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+        
+        .github-button {
+            background: #24292e;
+        }
+        
+        .github-button:hover {
+            background: #1b1f23;
+        }
     </style>
 </head>
 <body>
@@ -138,11 +161,17 @@
         </div>
         
         <div class="demo-section">
-            <h3>🌐 Web-based Authentication Flow</h3>
-            <p>Start the authentication process. This will open your browser and redirect back to the app:</p>
-            <button id="startAuth">Start Authentication Flow</button>
+            <h3>🐙 GitHub Authentication Flow</h3>
+            <p>Authenticate with your GitHub account. This will open GitHub OAuth in your browser and redirect back to the app:</p>
+            <button id="startAuth">Login with GitHub</button>
             <button id="checkStatus" class="hidden">Check Status</button>
+            <button id="logout" class="hidden">Logout</button>
             <div id="authStatus"></div>
+            <div id="userInfo" class="hidden">
+                <h4>👤 User Information</h4>
+                <div class="user-details"></div>
+                <button id="testGitHubAPI">Test GitHub API</button>
+            </div>
         </div>
         
         <div class="demo-section">
@@ -175,8 +204,9 @@
     <script>
         let currentSessionId = null;
         let statusCheckInterval = null;
+        let currentUser = null;
 
-        // Start authentication flow
+        // Start GitHub authentication flow
         document.getElementById('startAuth').addEventListener('click', async () => {
             try {
                 const response = await fetch('/auth/start');
@@ -184,9 +214,9 @@
                 
                 currentSessionId = data.sessionId;
                 
-                showStatus('info', `Authentication session started. Opening browser...`);
+                showStatus('info', `GitHub authentication session started. Opening GitHub OAuth...`);
                 
-                // Open the auth URL in the default browser
+                // Open the GitHub OAuth URL in the default browser
                 window.open(data.authUrl, '_blank');
                 
                 // Show check status button and hide start button
@@ -197,12 +227,58 @@
                 startStatusPolling();
                 
             } catch (error) {
-                showStatus('error', `Error starting authentication: ${error.message}`);
+                showStatus('error', `Error starting GitHub authentication: ${error.message}`);
             }
         });
 
         // Check authentication status
         document.getElementById('checkStatus').addEventListener('click', checkAuthStatus);
+
+        // Logout functionality
+        document.getElementById('logout').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/auth/logout');
+                const data = await response.json();
+                
+                if (data.success) {
+                    showStatus('success', 'Logged out successfully');
+                    resetAuthButtons();
+                    hideUserInfo();
+                } else {
+                    showStatus('error', 'Logout failed');
+                }
+            } catch (error) {
+                showStatus('error', `Logout error: ${error.message}`);
+            }
+        });
+
+        // Test GitHub API
+        document.getElementById('testGitHubAPI').addEventListener('click', async () => {
+            if (!currentUser || !currentUser.accessToken) {
+                showStatus('error', 'No valid GitHub access token');
+                return;
+            }
+
+            try {
+                // Test with GitHub API directly
+                const response = await fetch('https://api.github.com/user/repos', {
+                    headers: {
+                        'Authorization': `token ${currentUser.accessToken}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const repos = await response.json();
+                    showStatus('success', `GitHub API Test Successful! Found ${repos.length} repositories. Check console for details.`);
+                    console.log('User repositories:', repos);
+                } else {
+                    showStatus('error', `GitHub API Error: ${response.status} ${response.statusText}`);
+                }
+            } catch (error) {
+                showStatus('error', `GitHub API Test Failed: ${error.message}`);
+            }
+        });
 
         // Check server health
         document.getElementById('checkHealth').addEventListener('click', async () => {
@@ -236,20 +312,42 @@
                 const response = await fetch(`/auth/status/${currentSessionId}`);
                 const data = await response.json();
                 
-                if (data.status === 'completed') {
+                if (data.status === 'completed' && data.user) {
+                    currentUser = data.user;
                     showStatus('success', `
-                        ✅ Authentication completed!<br>
-                        Token: ${data.token}<br>
-                        User: ${JSON.stringify(data.user)}
+                        ✅ GitHub authentication completed!<br>
+                        Welcome ${data.user.username || data.user.displayName}!
                     `);
+                    displayUserInfo(data.user);
                     stopStatusPolling();
-                    resetAuthButtons();
+                    document.getElementById('checkStatus').classList.add('hidden');
+                    document.getElementById('logout').classList.remove('hidden');
                 } else {
-                    showStatus('info', `Status: ${data.status} (waiting for completion...)`);
+                    showStatus('info', `Status: ${data.status} (waiting for GitHub authentication...)`);
                 }
             } catch (error) {
                 showStatus('error', `Error checking status: ${error.message}`);
             }
+        }
+
+        function displayUserInfo(user) {
+            const userInfoDiv = document.getElementById('userInfo');
+            const userDetailsDiv = userInfoDiv.querySelector('.user-details');
+            
+            userDetailsDiv.innerHTML = `
+                ${user.avatar ? `<img src="${user.avatar}" alt="Avatar" class="avatar">` : ''}
+                <p><strong>Username:</strong> ${user.username}</p>
+                <p><strong>Display Name:</strong> ${user.displayName || 'Not provided'}</p>
+                <p><strong>Email:</strong> ${user.email || 'Not public'}</p>
+                <p><strong>GitHub ID:</strong> ${user.id}</p>
+            `;
+            
+            userInfoDiv.classList.remove('hidden');
+        }
+
+        function hideUserInfo() {
+            document.getElementById('userInfo').classList.add('hidden');
+            currentUser = null;
         }
 
         function startStatusPolling() {
@@ -266,6 +364,7 @@
         function resetAuthButtons() {
             document.getElementById('startAuth').style.display = 'inline-block';
             document.getElementById('checkStatus').classList.add('hidden');
+            document.getElementById('logout').classList.add('hidden');
             currentSessionId = null;
         }
 

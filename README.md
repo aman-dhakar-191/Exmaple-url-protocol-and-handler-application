@@ -118,6 +118,30 @@ The protocol is configured in `package.json` under the `build.protocols` section
 
 Default server runs on `http://localhost:3000`. You can modify this in `src/server/server.js`.
 
+### GitHub OAuth Setup
+
+The application now supports GitHub OAuth authentication. To set this up:
+
+1. **Create a GitHub OAuth App**:
+   - Go to GitHub Settings → Developer settings → OAuth Apps
+   - Click "New OAuth App"
+   - Set the following values:
+     - Application name: "Your App Name"
+     - Homepage URL: `http://localhost:3000`
+     - Authorization callback URL: `http://localhost:3000/auth/github/callback`
+   - Save the Client ID and Client Secret
+
+2. **Environment Configuration**:
+   - Copy `.env.example` to `.env`
+   - Replace the demo values with your actual GitHub OAuth credentials:
+     ```bash
+     GITHUB_CLIENT_ID=your_actual_client_id
+     GITHUB_CLIENT_SECRET=your_actual_client_secret
+     SESSION_SECRET=your_random_secure_secret
+     ```
+
+**Note**: The app will work with demo credentials for testing, but real GitHub authentication requires proper OAuth app setup.
+
 ## 🔧 API Endpoints
 
 - `GET /` - Main application interface
@@ -141,9 +165,18 @@ For production, electron-builder handles this automatically during installation.
 ### Manual Testing
 
 1. Start the application: `npm run dev`
-2. Click "Start Authentication Flow"
-3. Complete the login in the browser
-4. Verify the desktop app receives the callback
+2. Click "Login with GitHub" 
+3. Complete the GitHub OAuth flow in the browser
+4. Verify the desktop app receives the callback with GitHub user data
+
+### GitHub Authentication Testing
+
+For testing GitHub OAuth:
+1. Set up proper GitHub OAuth credentials in `.env`
+2. Start the app: `npm run dev`
+3. Click "Login with GitHub"
+4. Authorize the app on GitHub
+5. Verify user profile and GitHub API access work
 
 ### Protocol Testing
 
@@ -174,10 +207,12 @@ Test the protocol directly by:
 
 ## 📝 Development Notes
 
-- The application uses a mock authentication system for demonstration
-- In production, replace with real OAuth providers (Google, GitHub, etc.)
-- Session storage is in-memory; use Redis or database for production
-- Icons should be added to `assets/` directory for proper branding
+- **GitHub OAuth Integration**: The application now uses real GitHub OAuth instead of mock authentication
+- **Demo Mode**: Works with demo credentials for testing (see `.env.example`)
+- **Production Ready**: Real GitHub OAuth support with proper session management  
+- **Session Storage**: In-memory storage for development; use Redis or database for production
+- **Icons**: Add proper app icons to `assets/` directory for branding
+- **Environment Variables**: Never commit `.env` file with real credentials
 
 ## 🤝 Contributing
 
