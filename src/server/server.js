@@ -2,12 +2,51 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const session = require('express-session');
+const passport = require('passport');
+const GitHubStrategy = require('passport-github2').Strategy;
+require('dotenv').config();
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 // Store active sessions (in production, use Redis or database)
 const activeSessions = new Map();
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'demo-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    maxAge: 30 * 60 * 1000, // 30 minutes
+    secure: false // Set to true in production with HTTPS
+  }
+}));
+
+// Passport configuration
+passport.use(new GitHubStrategy({
+  clientID: process.env.GITHUB_CLIENT_ID || 'demo_client_id',
+  clientSecret: process.env.GITHUB_CLIENT_SECRET || 'demo_client_secret',
+  callbackURL: `http://localhost:${port}/auth/github/callback`
+}, (accessToken, refreshToken, profile, done) => {
+  // Store user data and token
+  const user = {
+    id: profile.id,
+    username: profile.username,
+    email: profile.emails?.[0]?.value,
+    avatar: profile.photos?.[0]?.value,
+    displayName: profile.displayName,
+    accessToken: accessToken
+  };
+  return done(null, user);
+}));
+
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((user, done) => done(null, user));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Middleware
 app.use(cors());
@@ -31,85 +70,145 @@ app.get('/auth/start', (req, res) => {
     status: 'pending'
   });
   
-  // In a real app, this would redirect to OAuth provider
-  // For demo purposes, we'll redirect to a mock login page
-  const authUrl = `/auth/login?session_id=${sessionId}&state=${state}`;
+  // Store session ID for GitHub OAuth flow
+  req.session.authSessionId = sessionId;
+  
+  // Redirect to GitHub OAuth
+  const authUrl = `/auth/github?state=${state}`;
   res.json({ 
     authUrl: `http://localhost:${port}${authUrl}`,
     sessionId 
   });
 });
 
-// Mock login page
-app.get('/auth/login', (req, res) => {
-  const { session_id, state } = req.query;
-  const session = activeSessions.get(session_id);
-  
-  if (!session || session.state !== state) {
-    return res.status(400).send('Invalid session or state');
+// GitHub authentication routes
+app.get('/auth/github', 
+  passport.authenticate('github', { scope: ['user:email', 'repo'] })
+);
+
+app.get('/auth/github/callback',
+  passport.authenticate('github', { failureRedirect: '/auth/error' }),
+  (req, res) => {
+    // Success - redirect to custom protocol
+    const user = req.user;
+    const sessionId = req.session.authSessionId || uuidv4();
+    
+    // Store session for desktop app polling
+    activeSessions.set(sessionId, {
+      user: user,
+      authenticated: true,
+      timestamp: Date.now(),
+      status: 'completed',
+      token: user.accessToken
+    });
+    
+    // For demo purposes, we'll still show GitHub info but with real data
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>GitHub Authentication Successful</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
+          .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0; }
+          .user-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 10px 0; }
+          .avatar { width: 50px; height: 50px; border-radius: 50%; margin-right: 10px; vertical-align: middle; }
+          button { background: #007cba; color: white; border: none; padding: 10px 20px; cursor: pointer; margin: 5px; }
+          button:hover { background: #005a87; }
+        </style>
+      </head>
+      <body>
+        <div class="success">
+          <h3>🎉 GitHub Authentication Successful!</h3>
+          <p>You have successfully authenticated with GitHub. The desktop app should now receive your authentication data.</p>
+        </div>
+        
+        <div class="user-info">
+          <h4>Authenticated User:</h4>
+          ${user.avatar ? `<img src="${user.avatar}" alt="Avatar" class="avatar">` : ''}
+          <p><strong>Username:</strong> ${user.username}</p>
+          <p><strong>Display Name:</strong> ${user.displayName || 'Not provided'}</p>
+          <p><strong>Email:</strong> ${user.email || 'Not public'}</p>
+          <p><strong>GitHub ID:</strong> ${user.id}</p>
+          <p><strong>Session ID:</strong> ${sessionId}</p>
+        </div>
+        
+        <button onclick="redirectToApp()">Return to Desktop App</button>
+        <button onclick="testGitHubAPI()">Test GitHub API</button>
+        
+        <script>
+          function redirectToApp() {
+            const callbackUrl = 'myapp://auth/callback?token=' + encodeURIComponent('${user.accessToken}') + 
+                               '&user=' + encodeURIComponent(JSON.stringify({
+                                 id: '${user.id}',
+                                 username: '${user.username}',
+                                 email: '${user.email || ''}',
+                                 displayName: '${user.displayName || ''}',
+                                 avatar: '${user.avatar || ''}'
+                               })) + 
+                               '&session_id=${sessionId}';
+            
+            alert('Redirecting back to desktop app...');
+            window.location.href = callbackUrl;
+          }
+          
+          async function testGitHubAPI() {
+            try {
+              const response = await fetch('https://api.github.com/user', {
+                headers: {
+                  'Authorization': 'token ${user.accessToken}',
+                  'Accept': 'application/vnd.github.v3+json'
+                }
+              });
+              const userData = await response.json();
+              alert('GitHub API Test Successful!\\n\\nUser: ' + userData.login + '\\nPublic Repos: ' + userData.public_repos);
+            } catch (error) {
+              alert('GitHub API Test Failed: ' + error.message);
+            }
+          }
+          
+          // Auto-redirect after 5 seconds
+          setTimeout(redirectToApp, 5000);
+        </script>
+      </body>
+      </html>
+    `);
+  }
+);
+
+app.get('/auth/error', (req, res) => {
+  res.send(`
+    <h1>Authentication Error</h1>
+    <p>GitHub authentication failed. Please try again.</p>
+    <p><a href="/auth/start">Try Again</a></p>
+  `);
+});
+
+// New endpoint for GitHub API testing
+app.get('/api/github/user', (req, res) => {
+  if (!req.user || !req.user.accessToken) {
+    return res.status(401).json({ error: 'Not authenticated' });
   }
   
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Mock Login</title>
-      <style>
-        body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
-        .form-group { margin: 15px 0; }
-        input, button { padding: 10px; width: 100%; box-sizing: border-box; }
-        button { background: #007cba; color: white; border: none; cursor: pointer; }
-        button:hover { background: #005a87; }
-        .info { background: #e7f3ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="info">
-        <h3>🔐 Mock Authentication</h3>
-        <p>This is a demonstration of the authentication flow. In a real application, this would be your OAuth provider (Google, GitHub, etc.)</p>
-        <p><strong>Session ID:</strong> ${session_id}</p>
-      </div>
-      
-      <h2>Login to Your Account</h2>
-      <form id="loginForm">
-        <div class="form-group">
-          <input type="text" id="username" placeholder="Username" value="demo_user" required>
-        </div>
-        <div class="form-group">
-          <input type="password" id="password" placeholder="Password" value="demo_pass" required>
-        </div>
-        <div class="form-group">
-          <button type="submit">Login & Return to App</button>
-        </div>
-      </form>
-      
-      <script>
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-          e.preventDefault();
-          const username = document.getElementById('username').value;
-          const password = document.getElementById('password').value;
-          
-          // Simulate authentication
-          if (username && password) {
-            // In real app, validate credentials
-            const token = 'demo_token_' + Math.random().toString(36).substr(2);
-            const user = { id: '123', username, email: username + '@example.com' };
-            
-            // Redirect back to the app using custom protocol
-            const callbackUrl = 'myapp://auth/callback?token=' + encodeURIComponent(token) + 
-                               '&user=' + encodeURIComponent(JSON.stringify(user)) + 
-                               '&session_id=${session_id}';
-            
-            alert('Authentication successful! Redirecting back to app...');
-            window.location.href = callbackUrl;
-          } else {
-            alert('Please enter username and password');
-          }
-        });
-      </script>
-    </body>
-    </html>
-  `);
+  res.json({
+    user: req.user,
+    token: req.user.accessToken
+  });
+});
+
+// Logout endpoint
+app.get('/auth/logout', (req, res) => {
+  req.logout((err) => {
+    if (err) {
+      return res.status(500).json({ error: 'Logout failed' });
+    }
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ error: 'Session cleanup failed' });
+      }
+      res.json({ success: true, message: 'Logged out successfully' });
+    });
+  });
 });
 
 // Callback endpoint for web-based flow (fallback)
