@@ -5,6 +5,9 @@ const express = require('express');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 
+// Load environment variables
+require('dotenv').config({ path: path.join(__dirname, '../..', '.env') });
+
 // Keep a global reference of the window object
 let mainWindow;
 let serverProcess;
@@ -151,188 +154,67 @@ const activeSessions = new Map();
 function startEmbeddedServer() {
   return new Promise((resolve, reject) => {
     try {
-      const expressApp = express();
-      const port = 3000;
-
-      // Middleware
-      expressApp.use(cors());
-      expressApp.use(express.json());
-      expressApp.use(express.static(path.join(__dirname, '../web')));
-
-      // Routes
-      expressApp.get('/', (req, res) => {
-        res.sendFile(path.join(__dirname, '../web/index.html'));
-      });
-
-      // Start authentication flow
-      expressApp.get('/auth/start', (req, res) => {
-        const sessionId = uuidv4();
-        const state = uuidv4();
-        
-        // Store session info
-        activeSessions.set(sessionId, {
-          state,
-          timestamp: Date.now(),
-          status: 'pending'
-        });
-        
-        // In a real app, this would redirect to OAuth provider
-        const authUrl = `/auth/login?session_id=${sessionId}&state=${state}`;
-        res.json({ 
-          authUrl: `http://localhost:${port}${authUrl}`,
-          sessionId 
-        });
-      });
-
-      // Mock login page
-      expressApp.get('/auth/login', (req, res) => {
-        const { session_id, state } = req.query;
-        const session = activeSessions.get(session_id);
-        
-        if (!session || session.state !== state) {
-          return res.status(400).send('Invalid session or state');
+      // Start the standalone server instead of duplicating code
+      // This ensures we use the same GitHub OAuth implementation
+      const serverPath = path.join(__dirname, '../server/server.js');
+      const serverProcess = spawn('node', [serverPath], {
+        cwd: path.join(__dirname, '../..'),
+        env: { 
+          ...process.env, 
+          NODE_ENV: 'development',
+          // Ensure we have the env variables
+          GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID || 'demo_client_id',
+          GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET || 'demo_client_secret',
+          SESSION_SECRET: process.env.SESSION_SECRET || 'demo_session_secret'
         }
-        
-        res.send(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Mock Login</title>
-            <style>
-              body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
-              .form-group { margin: 15px 0; }
-              input, button { padding: 10px; width: 100%; box-sizing: border-box; }
-              button { background: #007cba; color: white; border: none; cursor: pointer; }
-              button:hover { background: #005a87; }
-              .info { background: #e7f3ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-            </style>
-          </head>
-          <body>
-            <div class="info">
-              <h3>🔐 Mock Authentication</h3>
-              <p>This is a demonstration of the authentication flow. In a real application, this would be your OAuth provider (Google, GitHub, etc.)</p>
-              <p><strong>Session ID:</strong> ${session_id}</p>
-            </div>
-            
-            <h2>Login to Your Account</h2>
-            <form id="loginForm">
-              <div class="form-group">
-                <input type="text" id="username" placeholder="Username" value="demo_user" required>
-              </div>
-              <div class="form-group">
-                <input type="password" id="password" placeholder="Password" value="demo_pass" required>
-              </div>
-              <div class="form-group">
-                <button type="submit">Login & Return to App</button>
-              </div>
-            </form>
-            
-            <script>
-              document.getElementById('loginForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const username = document.getElementById('username').value;
-                const password = document.getElementById('password').value;
-                
-                // Simulate authentication
-                if (username && password) {
-                  const token = 'demo_token_' + Math.random().toString(36).substr(2);
-                  const user = { id: '123', username, email: username + '@example.com' };
-                  
-                  // Redirect back to the app using custom protocol
-                  const callbackUrl = 'myapp://auth/callback?token=' + encodeURIComponent(token) + 
-                                     '&user=' + encodeURIComponent(JSON.stringify(user)) + 
-                                     '&session_id=${session_id}';
-                  
-                  alert('Authentication successful! Redirecting back to app...');
-                  window.location.href = callbackUrl;
-                } else {
-                  alert('Please enter username and password');
-                }
-              });
-            </script>
-          </body>
-          </html>
-        `);
       });
 
-      // Callback endpoint for web-based flow (fallback)
-      expressApp.get('/auth/callback', (req, res) => {
-        const { token, user, session_id } = req.query;
-        const session = activeSessions.get(session_id);
+      let serverReady = false;
+
+      serverProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log('Server:', output.trim());
         
-        if (!session) {
-          return res.status(400).send('Invalid session');
+        if (output.includes('Server running at') && !serverReady) {
+          serverReady = true;
+          setTimeout(() => resolve(), 1000); // Give it a moment to fully initialize
         }
-        
-        // Mark session as completed
-        session.status = 'completed';
-        session.token = token;
-        session.user = JSON.parse(user);
-        
-        res.send(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Authentication Complete</title>
-            <style>
-              body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; text-align: center; }
-              .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0; }
-            </style>
-          </head>
-          <body>
-            <h2>✅ Authentication Successful</h2>
-            <div class="success">
-              <p>You have been successfully authenticated!</p>
-              <p>You can now close this browser window and return to the desktop application.</p>
-            </div>
-            <p><strong>Token:</strong> ${token}</p>
-            <p><strong>User:</strong> ${user}</p>
-          </body>
-          </html>
-        `);
       });
 
-      // API endpoint to check session status (for polling)
-      expressApp.get('/auth/status/:sessionId', (req, res) => {
-        const session = activeSessions.get(req.params.sessionId);
-        
-        if (!session) {
-          return res.status(404).json({ error: 'Session not found' });
+      serverProcess.stderr.on('data', (data) => {
+        console.error('Server error:', data.toString());
+      });
+
+      serverProcess.on('error', (error) => {
+        console.error('Failed to start server process:', error);
+        if (!serverReady) {
+          reject(error);
         }
-        
-        res.json({
-          status: session.status,
-          token: session.token,
-          user: session.user,
-          timestamp: session.timestamp
-        });
       });
 
-      // Health check
-      expressApp.get('/health', (req, res) => {
-        res.json({ status: 'OK', timestamp: new Date().toISOString() });
+      serverProcess.on('close', (code) => {
+        console.log(`Server process exited with code ${code}`);
       });
 
-      // Start the server
-      embeddedServer = expressApp.listen(port, 'localhost', () => {
-        console.log(`🚀 Embedded server running at http://localhost:${port}`);
-        resolve();
-      });
+      // Store reference for cleanup
+      global.serverProcess = serverProcess;
 
-      embeddedServer.on('error', (error) => {
-        console.error('Failed to start embedded server:', error);
-        reject(error);
-      });
+      // Timeout fallback
+      setTimeout(() => {
+        if (!serverReady) {
+          console.log('Server start timeout - assuming it started');
+          resolve();
+        }
+      }, 8000);
 
     } catch (error) {
-      console.error('Error creating embedded server:', error);
       reject(error);
     }
   });
 }
 
 function startServer() {
-  // Use embedded server for better reliability
+  // Use the standalone server for GitHub OAuth support
   return startEmbeddedServer();
 }
 
@@ -483,9 +365,9 @@ app.on('window-all-closed', () => {
     if (embeddedServer) {
       embeddedServer.close();
     }
-    // Kill server process if it exists (fallback)
-    if (serverProcess) {
-      serverProcess.kill();
+    // Kill server process if it exists
+    if (global.serverProcess) {
+      global.serverProcess.kill();
     }
     app.quit();
   }

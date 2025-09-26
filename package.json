@@ -4,8 +4,8 @@
   "description": "Example application demonstrating URL protocol handling with Node.js and Electron",
   "main": "src/electron/main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "concurrently \"npm run server\" \"wait-on http://localhost:3000 && electron .\"",
+    "start": "electron . --no-sandbox",
+    "dev": "concurrently \"npm run server\" \"wait-on http://localhost:3000 && electron . --no-sandbox\"",
     "server": "node src/server/server.js",
     "build": "electron-builder",
     "dist": "electron-builder --publish=never"
