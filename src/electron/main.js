@@ -1,6 +1,9 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
+const express = require('express');
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
 
 // Keep a global reference of the window object
 let mainWindow;
@@ -28,16 +31,27 @@ function createWindow() {
     show: false // Don't show until ready
   });
 
-  // Load the web app
-  const serverUrl = 'http://localhost:3000';
-  
-  // Start the Express server
+  // Start the Express server first
   startServer().then(() => {
+    // Load the web app from the server
+    const serverUrl = 'http://localhost:3000';
+    
     // Wait a bit for server to fully start
     setTimeout(() => {
       mainWindow.loadURL(serverUrl);
       mainWindow.show();
-    }, 2000);
+      
+      // Show window when ready to prevent white screen
+      mainWindow.once('ready-to-show', () => {
+        mainWindow.show();
+      });
+    }, 3000); // Increased timeout to ensure server starts
+  }).catch((error) => {
+    console.error('Failed to start server:', error);
+    // Fallback: load HTML file directly
+    const htmlPath = path.join(__dirname, '../web/index.html');
+    mainWindow.loadFile(htmlPath);
+    mainWindow.show();
   });
 
   // Open the DevTools in development
@@ -131,33 +145,195 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
-function startServer() {
+let embeddedServer;
+const activeSessions = new Map();
+
+function startEmbeddedServer() {
   return new Promise((resolve, reject) => {
-    const serverPath = path.join(__dirname, '../server/server.js');
-    serverProcess = spawn('node', [serverPath], {
-      stdio: 'pipe'
-    });
+    try {
+      const expressApp = express();
+      const port = 3000;
 
-    serverProcess.stdout.on('data', (data) => {
-      console.log(`Server: ${data}`);
-      if (data.toString().includes('Server running')) {
+      // Middleware
+      expressApp.use(cors());
+      expressApp.use(express.json());
+      expressApp.use(express.static(path.join(__dirname, '../web')));
+
+      // Routes
+      expressApp.get('/', (req, res) => {
+        res.sendFile(path.join(__dirname, '../web/index.html'));
+      });
+
+      // Start authentication flow
+      expressApp.get('/auth/start', (req, res) => {
+        const sessionId = uuidv4();
+        const state = uuidv4();
+        
+        // Store session info
+        activeSessions.set(sessionId, {
+          state,
+          timestamp: Date.now(),
+          status: 'pending'
+        });
+        
+        // In a real app, this would redirect to OAuth provider
+        const authUrl = `/auth/login?session_id=${sessionId}&state=${state}`;
+        res.json({ 
+          authUrl: `http://localhost:${port}${authUrl}`,
+          sessionId 
+        });
+      });
+
+      // Mock login page
+      expressApp.get('/auth/login', (req, res) => {
+        const { session_id, state } = req.query;
+        const session = activeSessions.get(session_id);
+        
+        if (!session || session.state !== state) {
+          return res.status(400).send('Invalid session or state');
+        }
+        
+        res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Mock Login</title>
+            <style>
+              body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; }
+              .form-group { margin: 15px 0; }
+              input, button { padding: 10px; width: 100%; box-sizing: border-box; }
+              button { background: #007cba; color: white; border: none; cursor: pointer; }
+              button:hover { background: #005a87; }
+              .info { background: #e7f3ff; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+            </style>
+          </head>
+          <body>
+            <div class="info">
+              <h3>🔐 Mock Authentication</h3>
+              <p>This is a demonstration of the authentication flow. In a real application, this would be your OAuth provider (Google, GitHub, etc.)</p>
+              <p><strong>Session ID:</strong> ${session_id}</p>
+            </div>
+            
+            <h2>Login to Your Account</h2>
+            <form id="loginForm">
+              <div class="form-group">
+                <input type="text" id="username" placeholder="Username" value="demo_user" required>
+              </div>
+              <div class="form-group">
+                <input type="password" id="password" placeholder="Password" value="demo_pass" required>
+              </div>
+              <div class="form-group">
+                <button type="submit">Login & Return to App</button>
+              </div>
+            </form>
+            
+            <script>
+              document.getElementById('loginForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const username = document.getElementById('username').value;
+                const password = document.getElementById('password').value;
+                
+                // Simulate authentication
+                if (username && password) {
+                  const token = 'demo_token_' + Math.random().toString(36).substr(2);
+                  const user = { id: '123', username, email: username + '@example.com' };
+                  
+                  // Redirect back to the app using custom protocol
+                  const callbackUrl = 'myapp://auth/callback?token=' + encodeURIComponent(token) + 
+                                     '&user=' + encodeURIComponent(JSON.stringify(user)) + 
+                                     '&session_id=${session_id}';
+                  
+                  alert('Authentication successful! Redirecting back to app...');
+                  window.location.href = callbackUrl;
+                } else {
+                  alert('Please enter username and password');
+                }
+              });
+            </script>
+          </body>
+          </html>
+        `);
+      });
+
+      // Callback endpoint for web-based flow (fallback)
+      expressApp.get('/auth/callback', (req, res) => {
+        const { token, user, session_id } = req.query;
+        const session = activeSessions.get(session_id);
+        
+        if (!session) {
+          return res.status(400).send('Invalid session');
+        }
+        
+        // Mark session as completed
+        session.status = 'completed';
+        session.token = token;
+        session.user = JSON.parse(user);
+        
+        res.send(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Authentication Complete</title>
+            <style>
+              body { font-family: Arial, sans-serif; max-width: 500px; margin: 50px auto; padding: 20px; text-align: center; }
+              .success { background: #d4edda; color: #155724; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            </style>
+          </head>
+          <body>
+            <h2>✅ Authentication Successful</h2>
+            <div class="success">
+              <p>You have been successfully authenticated!</p>
+              <p>You can now close this browser window and return to the desktop application.</p>
+            </div>
+            <p><strong>Token:</strong> ${token}</p>
+            <p><strong>User:</strong> ${user}</p>
+          </body>
+          </html>
+        `);
+      });
+
+      // API endpoint to check session status (for polling)
+      expressApp.get('/auth/status/:sessionId', (req, res) => {
+        const session = activeSessions.get(req.params.sessionId);
+        
+        if (!session) {
+          return res.status(404).json({ error: 'Session not found' });
+        }
+        
+        res.json({
+          status: session.status,
+          token: session.token,
+          user: session.user,
+          timestamp: session.timestamp
+        });
+      });
+
+      // Health check
+      expressApp.get('/health', (req, res) => {
+        res.json({ status: 'OK', timestamp: new Date().toISOString() });
+      });
+
+      // Start the server
+      embeddedServer = expressApp.listen(port, 'localhost', () => {
+        console.log(`🚀 Embedded server running at http://localhost:${port}`);
         resolve();
-      }
-    });
+      });
 
-    serverProcess.stderr.on('data', (data) => {
-      console.error(`Server Error: ${data}`);
-    });
+      embeddedServer.on('error', (error) => {
+        console.error('Failed to start embedded server:', error);
+        reject(error);
+      });
 
-    serverProcess.on('close', (code) => {
-      console.log(`Server process exited with code ${code}`);
-    });
-
-    // Timeout after 10 seconds
-    setTimeout(() => {
-      resolve(); // Resolve anyway to prevent hanging
-    }, 10000);
+    } catch (error) {
+      console.error('Error creating embedded server:', error);
+      reject(error);
+    }
   });
+}
+
+function startServer() {
+  // Use embedded server for better reliability
+  return startEmbeddedServer();
 }
 
 function handleProtocolUrl(url) {
@@ -200,6 +376,15 @@ function processProtocolUrl(url) {
         console.error('Error parsing user data:', e);
       }
 
+      // Update session status on server side
+      if (sessionId && activeSessions.has(sessionId)) {
+        const session = activeSessions.get(sessionId);
+        session.status = 'completed';
+        session.token = token;
+        session.user = user;
+        console.log('Updated session status:', sessionId);
+      }
+
       const authResult = {
         success: true,
         token,
@@ -229,6 +414,7 @@ function processProtocolUrl(url) {
                 ✅ Authentication completed via protocol handler!<br>
                 User: ${user ? user.username || user.name || 'Unknown' : 'N/A'}<br>
                 Token: ${token}<br>
+                Session ID: ${sessionId}<br>
                 Timestamp: ${authResult.timestamp}
               </div>
             \`;
@@ -239,6 +425,11 @@ function processProtocolUrl(url) {
           const checkBtn = document.getElementById('checkStatus');
           if (startBtn) startBtn.style.display = 'inline-block';
           if (checkBtn) checkBtn.classList.add('hidden');
+          
+          // Stop any polling that might be active
+          if (typeof stopStatusPolling === 'function') {
+            stopStatusPolling();
+          }
         `);
       }
 
@@ -288,7 +479,11 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    // Kill server process
+    // Close embedded server
+    if (embeddedServer) {
+      embeddedServer.close();
+    }
+    // Kill server process if it exists (fallback)
     if (serverProcess) {
       serverProcess.kill();
     }
