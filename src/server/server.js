@@ -8,7 +8,7 @@ const GitHubStrategy = require('passport-github2').Strategy;
 require('dotenv').config();
 
 const app = express();
-const port = process.env.PORT || 3000;
+let port = process.env.PORT || 3000;
 
 // Store active sessions (in production, use Redis or database)
 const activeSessions = new Map();

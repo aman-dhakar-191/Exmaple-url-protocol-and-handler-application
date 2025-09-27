@@ -1,0 +1,41 @@
+{
+  "timestamp": "2025-09-26T21:43:08.326Z",
+  "framework": {
+    "core": [
+      "ProtocolHandler.js"
+    ],
+    "server": [
+      "ServerFramework.js"
+    ],
+    "electron": [
+      "ElectronFramework.js"
+    ],
+    "auth": [
+      "GitHubAuthProvider.js"
+    ],
+    "utils": [
+      "index.js"
+    ],
+    "main": [
+      "index.js"
+    ]
+  },
+  "examples": {
+    "basic-app": {
+      "files": [
+        "main.js"
+      ],
+      "web": [
+        "index.html"
+      ]
+    }
+  },
+  "tests": [
+    "framework-tests.js"
+  ],
+  "testResults": {
+    "passed": 16,
+    "failed": 0,
+    "errors": []
+  }
+}
